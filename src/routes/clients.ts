@@ -1,8 +1,34 @@
 import { Request, Response, Router } from 'express';
 import { Client, ClientData } from '../models/Client';
 import { authenticate, authorize, AuthRequest } from '../middleware/auth';
+import multer from 'multer';
 
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/nic_proofs'); // Save files in the "uploads/nic_proofs" folder
+  },
+  filename: (req, file, cb) => {
+    cb(null, `${Date.now()}-${file.originalname}`); // Use a timestamp to avoid duplicate filenames
+  },
+});
+const upload = multer({ storage });
 const router = Router();
+
+router.post('/', upload.single('nic_proof'), async (req, res) => {
+  try {
+    const { body } = req;
+    const nicProofPath = req.file ? req.file.path : null;
+
+    const clientData = { ...body, nic_proof: nicProofPath };
+    console.log('Client data to save:', clientData);
+
+    res.status(201).json({ success: true, message: 'Client created successfully' });
+  } catch (error) {
+    console.error('Error creating client:', error);
+    res.status(500).json({ success: false, message: 'Failed to create client' });
+  }
+});
 
 // Get all clients - accessible to managers and sales reps
 router.get('/', authenticate, authorize(['admin', 'manager', 'sales']), async (req: AuthRequest, res: Response) => {
