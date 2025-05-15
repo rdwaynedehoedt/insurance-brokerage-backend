@@ -1,8 +1,20 @@
 import { Request, Response, Router } from 'express';
 import { Client, ClientData } from '../models/Client';
 import { authenticate, authorize, AuthRequest } from '../middleware/auth';
+import multer from 'multer';
 
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/nic_proofs'); // Save files in the "uploads/nic_proofs" folder
+  },
+  filename: (req, file, cb) => {
+    cb(null, `${Date.now()}-${file.originalname}`); // Use a timestamp to avoid duplicate filenames
+  },
+});
+const upload = multer({ storage });
 const router = Router();
+
 
 // Get all clients - accessible to managers and sales reps
 router.get('/', authenticate, authorize(['admin', 'manager', 'sales']), async (req: AuthRequest, res: Response) => {
@@ -37,43 +49,46 @@ router.get('/:id', authenticate, authorize(['admin', 'manager', 'sales']), async
 });
 
 // Create a new client
-router.post('/', authenticate, authorize(['admin', 'manager', 'sales']), async (req: AuthRequest, res: Response) => {
-  try {
-    const clientData: ClientData = req.body;
-    
-    console.log('Received client data:', JSON.stringify(clientData, null, 2));
-    
-    // Set sales rep ID if not provided
-    if (!clientData.sales_rep_id && req.user?.role === 'sales') {
-      clientData.sales_rep_id = req.user.userId;
-      console.log('Setting sales_rep_id to:', clientData.sales_rep_id);
-    }
-    
-    // Validate required fields
-    const requiredFields = ['customer_type', 'product', 'insurance_provider', 'client_name', 'mobile_no'];
-    const missingFields = requiredFields.filter(field => !clientData[field as keyof ClientData]);
-    
-    if (missingFields.length > 0) {
-      console.log('Missing required fields:', missingFields);
-      return res.status(400).json({
-        success: false,
-        message: `Missing required fields: ${missingFields.join(', ')}`
+router.post(
+  '/',
+  upload.single('nic_proof'),
+  authenticate,
+  authorize(['admin', 'manager', 'sales']),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const { body } = req;
+      const nicProofPath = req.file ? req.file.path : null;
+      const clientData: ClientData = { ...body, nic_proof: nicProofPath };
+
+      // Set sales rep ID if not provided
+      if (!clientData.sales_rep_id && req.user?.role === 'sales') {
+        clientData.sales_rep_id = req.user.userId;
+      }
+
+      // Validate required fields
+      const requiredFields = ['customer_type', 'product', 'insurance_provider', 'client_name', 'mobile_no'];
+      const missingFields = requiredFields.filter(field => !clientData[field as keyof ClientData]);
+
+      if (missingFields.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Missing required fields: ${missingFields.join(', ')}`
+        });
+      }
+
+      const clientId = await Client.create(clientData);
+
+      res.status(201).json({
+        success: true,
+        message: 'Client created successfully',
+        data: { id: clientId } // <-- This is the key your frontend expects!
       });
+    } catch (error) {
+      console.error('Error creating client:', error);
+      res.status(500).json({ success: false, message: 'Failed to create client' });
     }
-    
-    const clientId = await Client.create(clientData);
-    console.log('Client created with ID:', clientId);
-    
-    res.status(201).json({
-      success: true,
-      message: 'Client created successfully',
-      data: { id: clientId }
-    });
-  } catch (error) {
-    console.error('Error creating client:', error);
-    res.status(500).json({ success: false, message: 'Failed to create client' });
   }
-});
+);
 
 // Update a client
 router.put('/:id', authenticate, authorize(['admin', 'manager', 'sales']), async (req: AuthRequest, res: Response) => {
@@ -180,4 +195,4 @@ router.get('/sales-rep/:id', authenticate, authorize(['admin', 'manager']), asyn
   }
 });
 
-export default router; 
+export default router;

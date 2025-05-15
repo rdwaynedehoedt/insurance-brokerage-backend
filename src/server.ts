@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import testRoutes from './routes/test';
 import authRoutes from './routes/auth';
 import clientRoutes from './routes/clients';
+import path from 'path';
 
 dotenv.config();
 
@@ -18,6 +19,7 @@ app.use(express.json());
 app.use('/api', testRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/clients', clientRoutes);
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 // Basic route
 app.get('/', (req: Request, res: Response) => {
