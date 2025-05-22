@@ -23,8 +23,13 @@ export interface ClientData {
   nic_proof?: string;
   dob_proof?: string;
   business_registration?: string;
+  business_registration_proof?: string;
   svat_proof?: string;
   vat_proof?: string;
+  coverage_proof?: string;
+  sum_insured_proof?: string;
+  policy_fee_invoice?: string;
+  vat_debit_note?: string;
   policy_type?: string;
   policy_no?: string;
   policy_period_from?: string;
@@ -49,6 +54,7 @@ export interface ClientData {
   commission_tc?: number;
   sales_rep_id?: number;
   policies?: number;
+  [key: string]: any; // Allow additional dynamic document fields
 }
 
 export class Client {
