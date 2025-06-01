@@ -5,6 +5,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
 
 const router = Router();
 
@@ -190,11 +191,11 @@ router.post('/with-documents',
       const clientDir = path.join(__dirname, '../../uploads/documents', clientId);
       
       try {
-        if (fs.existsSync(tempDir)) {
-          // Create the client directory if it doesn't exist
-          if (!fs.existsSync(path.dirname(clientDir))) {
-            fs.mkdirSync(path.dirname(clientDir), { recursive: true });
-          }
+      if (fs.existsSync(tempDir)) {
+        // Create the client directory if it doesn't exist
+        if (!fs.existsSync(path.dirname(clientDir))) {
+          fs.mkdirSync(path.dirname(clientDir), { recursive: true });
+        }
           
           if (fs.existsSync(clientDir)) {
             console.log(`Client directory already exists, removing to replace: ${clientDir}`);
@@ -202,18 +203,18 @@ router.post('/with-documents',
           }
           
           console.log(`Moving documents from ${tempDir} to ${clientDir}`);
-          
-          // Rename the directory
-          fs.renameSync(tempDir, clientDir);
-          
-          // Update the file paths in the database
-          const updateData: any = {};
+        
+        // Rename the directory
+        fs.renameSync(tempDir, clientDir);
+        
+        // Update the file paths in the database
+        const updateData: any = {};
           let allFilesUpdated = true;
           
-          Object.keys(files).forEach(fieldName => {
-            const oldPath = clientData[fieldName];
-            const newPath = oldPath.replace(tempClientId, clientId);
-            updateData[fieldName] = newPath;
+        Object.keys(files).forEach(fieldName => {
+          const oldPath = clientData[fieldName];
+          const newPath = oldPath.replace(tempClientId, clientId);
+          updateData[fieldName] = newPath;
             
             // Verify the file was moved and exists in the new location
             const newFilePath = path.join(__dirname, '../../', newPath);
@@ -225,9 +226,9 @@ router.post('/with-documents',
             }
             
             console.log(`Updating document path: ${oldPath} → ${newPath}`);
-          });
-          
-          await Client.update(clientId, updateData);
+        });
+        
+        await Client.update(clientId, updateData);
           
           if (!allFilesUpdated) {
             console.warn(`Some files may not have been moved correctly for client ${clientId}`);
@@ -239,6 +240,26 @@ router.post('/with-documents',
         console.error('Error moving client document files:', err);
         // Continue execution - we've already created the client record
         // Just log the error and return a warning in the response
+      }
+      
+      // Automatically repair all document paths to ensure consistency
+      try {
+        console.log('Automatically repairing document paths after client creation');
+        
+        // Create the request URL to the internal API
+        const apiUrl = 'http://localhost:5000/api/repair-all-documents';
+        
+        // Make the request to repair documents
+        const repairResponse = await axios.get(apiUrl);
+        
+        if (repairResponse.data.success) {
+          console.log(`Document repair successful: Fixed ${repairResponse.data.fixedPaths} paths, created ${repairResponse.data.createdDirectories} directories`);
+        } else {
+          console.warn('Document repair was not fully successful:', repairResponse.data);
+        }
+      } catch (repairError) {
+        console.error('Error during automatic document repair:', repairError);
+        // Continue with the response, this is just an enhancement
       }
       
       res.status(201).json({
@@ -349,13 +370,34 @@ router.put('/:id/with-documents',
         }
       });
       
-      const updated = await Client.update(id, clientData);
+      // Update client data with document paths
+      const success = await Client.update(id, clientData);
       
-      if (!updated) {
+      if (!success) {
         return res.status(500).json({
           success: false,
           message: 'Failed to update client with documents'
         });
+      }
+      
+      // Automatically repair all document paths after client update
+      try {
+        console.log('Automatically repairing document paths after client update');
+        
+        // Create the request URL to the internal API
+        const apiUrl = 'http://localhost:5000/api/repair-all-documents';
+        
+        // Make the request to repair documents
+        const repairResponse = await axios.get(apiUrl);
+        
+        if (repairResponse.data.success) {
+          console.log(`Document repair successful: Fixed ${repairResponse.data.fixedPaths} paths, created ${repairResponse.data.createdDirectories} directories`);
+        } else {
+          console.warn('Document repair was not fully successful:', repairResponse.data);
+        }
+      } catch (repairError) {
+        console.error('Error during automatic document repair:', repairError);
+        // Continue with the response, this is just an enhancement
       }
       
       res.status(200).json({
@@ -975,6 +1017,73 @@ router.post('/diagnostic/fix-document-paths',
         message: 'Failed to fix document paths',
         error: (error as Error).message
       });
+    }
+  }
+);
+
+// Add a direct download link generator endpoint
+router.get('/:id/documents/:documentType/direct-link', 
+  authenticate, 
+  authorize(['admin', 'manager', 'sales']), 
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const { id, documentType } = req.params;
+      
+      // Check if client exists
+      const existingClient = await Client.getById(id);
+      if (!existingClient) {
+        return res.status(404).json({ success: false, message: 'Client not found' });
+      }
+      
+      // Sales reps can only access their own clients' documents
+      if (
+        req.user?.role === 'sales' && 
+        existingClient.sales_rep_id !== req.user.userId
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: 'You are not authorized to access this client\'s documents'
+        });
+      }
+      
+      // Get the document path from the client
+      const docPath = existingClient[documentType as keyof typeof existingClient] as string;
+      
+      if (!docPath) {
+        return res.status(404).json({
+          success: false,
+          message: 'Document not found'
+        });
+      }
+      
+      // Extract the filename from the path
+      let filename = '';
+      const lastSlashIndex = docPath.lastIndexOf('/');
+      if (lastSlashIndex !== -1) {
+        filename = docPath.substring(lastSlashIndex + 1);
+      } else {
+        filename = docPath;
+      }
+      
+      // Create a direct download URL
+      // Use the server's protocol and host
+      const protocol = req.protocol;
+      const host = req.get('host');
+      
+      // Construct the direct download URL
+      const downloadUrl = `${protocol}://${host}/api/clients/${id}/documents/${filename}/download`;
+      
+      // Return the direct download URL
+      res.status(200).json({
+        success: true,
+        documentType,
+        filename,
+        downloadUrl,
+        directAccessUrl: `${protocol}://${host}${docPath}`
+      });
+    } catch (error) {
+      console.error('Error creating direct download link:', error);
+      res.status(500).json({ success: false, message: 'Failed to create download link' });
     }
   }
 );
